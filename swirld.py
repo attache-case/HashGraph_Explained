@@ -3,7 +3,7 @@
 from collections import namedtuple, defaultdict
 from pickle import dumps, loads
 from random import choice
-from time import time
+from time import time, sleep
 from itertools import zip_longest
 from functools import reduce
 
@@ -12,6 +12,8 @@ from pysodium import (crypto_sign_keypair, crypto_sign, crypto_sign_open,
                       crypto_generichash)
 
 from utils import bfs, toposort, randrange
+
+import sys, signal
 
 
 C = 6
@@ -27,7 +29,7 @@ def majority(it):
         return True, hits[1]
 
 
-Event = namedtuple('Event', 'd p t c s')
+Event = namedtuple('Event', 'd p t c s') # data, parent hashes, event timestamp, creator ID(pubkey), signature
 class Trilean:
     false = 0
     true = 1
@@ -43,6 +45,7 @@ class Node:
         self.tot_stake = sum(stake.values())
         self.min_s = 2 * self.tot_stake / 3  # min stake amount
 
+        self.flg = False # for debug
 
         # {event-hash => event}: this is the hash graph
         self.hg = {}
@@ -55,11 +58,17 @@ class Node:
         # [event-hash]: final order of the transactions
         self.transactions = []
         self.idx = {}
+        self.prev_transactions_len = 0
         # {round-num}: rounds where famousness is fully decided
         self.consensus = set()
+        # {event-hash => consensus-timestamp}: consensus timestamp of the event
+        self.consensusts = {}
+        # {event-hash => consensus-time}: system time that the event reached consensus
+        self.consensusat = {}
+        self.consensusats = []
         # {event-hash => {event-hash => bool}}
         self.votes = defaultdict(dict)
-        # {round-num => {member-pk => event-hash}}: 
+        # {round-num => {member-pk => event-hash}}:
         self.witnesses = defaultdict(dict)
         self.famous = {}
 
@@ -306,10 +315,33 @@ class Node:
             final = sorted(seen, key=lambda x: (ts[x], white ^ to_int(x)))
             for i, x in enumerate(final):
                 self.idx[x] = i + len(self.transactions)
+                self.consensusats.append(time())
+                # self.consensusts[x] = ts[x]
+                # self.consensusat[x] = time()
             self.transactions += final
         if self.consensus:
             print(self.consensus)
-
+        # if self.prev_transactions_len < len(self.transactions):
+        #     additional_transactions = []
+        #     for transaction in self.transactions[self.prev_transactions_len:]:
+        #         rnd = self.round[transaction]
+        #         idx = self.idx[transaction]
+        #         t = self.hg[transaction].t
+        #         cat = self.consensusat[transaction]
+        #         additional_transactions.append((rnd, idx, t, cat, cat - t))
+        #     print(additional_transactions)
+        #     self.prev_transactions_len = len(self.transactions)
+        if self.flg == False and len(self.transactions) > 200:
+            print("###DEBUG###")
+            transaction_infos = []
+            for i, transaction in enumerate(self.transactions):
+                rnd = self.round[transaction]
+                idx = self.idx[transaction]
+                t = self.hg[transaction].t
+                cat = self.consensusats[i]
+                transaction_infos.append((rnd, idx, cat - t))
+            print(transaction_infos)
+            self.flg = True
 
 
     def main(self):
@@ -328,18 +360,40 @@ class Node:
             self.find_order(new_c)
 
 
-def test(n_nodes, n_turns):
-    kps = [crypto_sign_keypair() for _ in range(n_nodes)]
-    network = {}
-    stake = {kp[0]: 1 for kp in kps}
-    nodes = [Node(kp, network, n_nodes, stake) for kp in kps]
-    for n in nodes:
-        network[n.pk] = n.ask_sync
-    mains = [n.main() for n in nodes]
-    for m in mains:
-        next(m)
-    for i in range(n_turns):
-        r = randrange(n_nodes)
-        print('working node: %i, event number: %i' % (r, i))
-        next(mains[r])
-    return nodes
+n_nodes = int(sys.argv[1])
+kps = [crypto_sign_keypair() for _ in range(n_nodes)]
+network = {}
+stake = {kp[0]: 1 for kp in kps}
+nodes = [Node(kp, network, n_nodes, stake) for kp in kps]
+for n in nodes:
+    network[n.pk] = n.ask_sync
+mains = [n.main() for n in nodes]
+for m in mains:
+    next(m)
+
+def task(arg1, arg2):
+    r = randrange(n_nodes)
+    print('working node: %i, event number: %i' % (r, 0))
+    next(mains[r])
+
+signal.signal(signal.SIGALRM, task)
+signal.setitimer(signal.ITIMER_REAL, 0.1, 0.1) # TODO: throughput based interval
+sleep(10)
+
+# def test(n_nodes, n_turns):
+#     kps = [crypto_sign_keypair() for _ in range(n_nodes)]
+#     network = {}
+#     stake = {kp[0]: 1 for kp in kps}
+#     nodes = [Node(kp, network, n_nodes, stake) for kp in kps]
+#     for n in nodes:
+#         network[n.pk] = n.ask_sync
+#     mains = [n.main() for n in nodes]
+#     for m in mains:
+#         next(m)
+#     for i in range(n_turns):
+#         r = randrange(n_nodes)
+#         print('working node: %i, event number: %i' % (r, i))
+#         next(mains[r])
+#     return nodes
+
+# test(4, 500)

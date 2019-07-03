@@ -79,7 +79,7 @@ class App:
 
         plot = figure(
                 plot_height=700, plot_width=900, y_range=(0, 30),
-                tools=[PanTool(dimensions=['height']),
+                tools=[PanTool(dimensions='height'),
                        HoverTool(tooltips=[
                            ('round', '@round'), ('hash', '@hash'),
                            ('timestamp', '@time'), ('payload', '@payload'),
